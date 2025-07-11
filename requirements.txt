@@ -1,8 +1,6 @@
-flask
-gunicorn
+flask 
+requests 
 beautifulsoup4 
-lxml 
-html5lib
-requests
 pillow 
-pytesseract
+paddleocr 
+paddlepaddle
