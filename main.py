@@ -1,42 +1,73 @@
 from flask import Flask, request, jsonify
 import requests
-from PIL import Image
-from io import BytesIO
-from paddleocr import PaddleOCR
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 app = Flask(__name__)
 
-# Initialize PaddleOCR globally
-ocr = PaddleOCR(use_angle_cls=True, lang='en')
+OCR_SPACE_KEY = "K88985616888957"
+OCR_SPACE_URL = "https://api.ocr.space/parse/imageurl"
 
-@app.route('/extract-image-text', methods=['GET'])
-def extract_text_from_image_url():
-    image_url = request.args.get('url')
-    if not image_url:
-        return jsonify({"error": "Please provide an image URL using ?url= parameter"}), 400
+def ocr_image(url):
+    try:
+        r = requests.get(
+            OCR_SPACE_URL,
+            params={
+                "apikey": OCR_SPACE_KEY,
+                "url": url,
+                "language": "eng",
+                "isOverlayRequired": False
+            },
+            timeout=15,
+        )
+        r.raise_for_status()
+        j = r.json()
+        if j.get("IsErroredOnProcessing"):
+            return ""
+        pr = j.get("ParsedResults")
+        return pr[0].get("ParsedText", "").strip() if pr else ""
+    except:
+        return ""
+
+@app.route("/extract-ocr", methods=["GET"])
+def extract_ocr():
+    page_url = request.args.get("url", "").strip()
+    if not page_url:
+        return jsonify(error="Use /extract-ocr?url=PAGE_URL"), 400
 
     try:
-        # Download image from URL
-        response = requests.get(image_url, timeout=10)
-        response.raise_for_status()
-
-        # Open image using PIL
-        img = Image.open(BytesIO(response.content)).convert('RGB')
-
-        # OCR using PaddleOCR
-        result = ocr.ocr(img, cls=True)
-
-        extracted_text = []
-        for line in result[0]:
-            extracted_text.append(line[1][0])  # Extract text part only
-
-        return jsonify({
-            "image_url": image_url,
-            "extracted_text": "\n".join(extracted_text)
-        })
-
+        resp = requests.get(page_url, timeout=10)
+        resp.raise_for_status()
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify(error=f"Failed to fetch page: {e}"), 502
 
-if __name__ == '__main__':
-    app.run(debug=True)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    body = soup.body
+    if not body:
+        return jsonify(error="No <body> found"), 500
+
+    parts = []
+    for node in body.descendants:
+        # skip layout and script/style sections
+        if isinstance(node, (NavigableString, Tag)):
+            if node.find_parent(("header", "footer", "nav", "aside", "script", "style")):
+                continue
+
+        # plain text
+        if isinstance(node, NavigableString):
+            text = node.strip()
+            if text:
+                parts.append(text)
+
+        # image → OCR
+        elif isinstance(node, Tag) and node.name.lower() == "img":
+            src = node.get("src")
+            if src:
+                img_url = requests.compat.urljoin(page_url, src)
+                ocr_text = ocr_image(img_url)
+                if ocr_text:
+                    parts.append(ocr_text)
+
+    return jsonify(text="\n".join(parts)), 200
+
+if __name__ == "__main__":
+    app.run(port=5000)

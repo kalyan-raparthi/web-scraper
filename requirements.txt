@@ -3,7 +3,3 @@ gunicorn
 flask 
 requests 
 beautifulsoup4 
-pillow 
-paddleocr 
-paddlepaddle
-setuptools
